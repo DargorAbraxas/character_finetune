@@ -14,7 +14,7 @@ class BaseFineTune():
     def __init__(
             self,
             base_model,
-            datafile,
+            dataset_file,
             output_dir=None,
             attn_implementation='eager',
             num_proc=4,
@@ -30,8 +30,8 @@ class BaseFineTune():
             target_modules=["q_proj", "v_proj"]
         ):
         self.base_model = base_model
-        self.datafile = datafile
-        self.output_dir = output_dir
+        self.dataset_file = dataset_file
+        self.output_dir = Path(output_dir) if output_dir else None
         self.attn_implementation = attn_implementation
         self.num_proc = num_proc
         self.text_block_size = text_block_size
@@ -46,13 +46,12 @@ class BaseFineTune():
         self.target_modules = target_modules
 
         if not output_dir:
-            self.output_dir = Path(Path(__file__).parent).joinpath("output")
-            if adapter_training:
-                self.output_dir = self.output_dir.joinpath("adapters")
-            
-
+            self.output_dir = Path(Path(__file__).parent).joinpath("output", "base")
+        if adapter_training:
+            self.output_dir = self.output_dir.joinpath("foundational_adapter")
+        
     def preprocess_function(self, tokenizer, examples):
-        return tokenizer(f' {examples['sentence']}') # Some models' tokenizer might supress spaces
+        return tokenizer([f" {examples['sentence']}"]) # Some models' tokenizer might supress spaces
 
     def group_texts(self, examples):
         concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
@@ -115,7 +114,7 @@ class BaseFineTune():
             args=training_args,
             train_dataset=lm_dataset,
             data_collator=data_collator,
-            tokenizer=tokenizer
+            processing_class=tokenizer
         )
 
         trainer.train()
@@ -124,12 +123,13 @@ class BaseFineTune():
 if __name__ == "__main__":
     base_trainer = BaseFineTune(
         base_model = "google/gemma-3-1b-pt",
-        datafile = "/work/gemma_socrates_v0/full_no_names.jsonl",
-        output_dir = "/work/gemma_socrates_v0/output",
-        text_block_size = 256,
+        dataset_file = "/home/david/conv_data_generation/model_training/test_data/full_no_names.jsonl",
+        text_block_size = 254,
         learning_rate = 1e-5,
         weight_decay = 0.01,
         save_steps = 5000,
-        num_train_epochs = 10
+        num_train_epochs = 1,
+        num_proc = 2
     )
+
     base_trainer.train()

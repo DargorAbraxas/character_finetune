@@ -5,8 +5,10 @@
 from trl import SFTTrainer, SFTConfig
 from datasets import load_from_disk
 from dotenv import load_dotenv
+from glob import glob
 from pathlib import Path
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import re
 load_dotenv()
 
 class InstructFineTune():
@@ -108,19 +110,28 @@ class InstructFineTune():
         trainer.train()
         print(f"saved to {self.output_dir}")
 
+def check_digit(text):
+    return int(text) if text.isdigit() else text
+
+def natural_keys(text):
+    return [ check_digit(c) for c in re.split(r'(\d+)', text) ]
+
 if __name__ == "__main__":
     sys_prompt = "You are the philospher Socrates. Answer as he would with the knowlegde of his time and no modern one."
-    chat_template_path = "/work/gemma_socrates_v0/plus_to_inst_assistant/generate_tag_template.jinja"
+    chat_template_path = "full_tune/generate_tag_template.jinja"
+
+    checkpoints_path = "full_tune/output"
+    base_adapter_checkpoint = [sorted(glob(f"{path}/*"), key=natural_keys)[-1] for path in glob(f"{checkpoints_path}/*") if "base" in path and Path(path).is_dir()][0]
 
     # Use both with and without prompt cases
     for add_prompt in [False, True]:
         inst_trainer = InstructFineTune(
             original_base_model = "google/gemma-3-1b-pt",
-            base_model_checkpoint = "/work/gemma_socrates_v0/base_to_plus/output/checkpoint-3650/",
-            datafile = "/work/gemma_socrates_v0/datasets/clean_dialogue_Socrates_gemma",
+            base_model_checkpoint = base_adapter_checkpoint,
+            datafile = "test_data/train",
             add_prompt = add_prompt,
             chat_template_path = chat_template_path,
-            sys_prompt = "You are Socrates, the classical Greek philosopher known for your wisdom and method of questioning. Engage in thoughtful and probing conversations, encouraging critical thinking and self-reflection." # "You are the philospher Socrates. Answer as he would with the knowlegde of his time and no modern one."
+            sys_prompt = sys_prompt
         )
 
         inst_trainer.train()

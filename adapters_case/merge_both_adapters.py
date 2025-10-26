@@ -5,10 +5,13 @@
 from trl import SFTTrainer, SFTConfig
 from datasets import load_from_disk
 from dotenv import load_dotenv
-from peft import LoraConfig, TaskType, get_peft_model
+from glob import glob
 from pathlib import Path
+from peft import LoraConfig, TaskType, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import re
 load_dotenv()
+
 
 class CharacterAdapter():
     def __init__(
@@ -45,13 +48,14 @@ class CharacterAdapter():
         self.save_steps = save_steps
         self.num_train_epochs = num_train_epochs
         self.num_proc = num_proc
+        self.assistant_only_loss = assistant_only_loss
         self.r = r
         self.lora_alpha = lora_alpha
         self.lora_dropout = lora_dropout
         self.target_modules = target_modules
 
         if not output_dir:
-            self.output_dir = Path(Path(__file__).parent).joinpath("output_adapter")
+            self.output_dir = Path(Path(__file__).parent).joinpath("output", "merged")
 
         if assistant_only_loss:
             extra_args = {"assistant_only_loss": True}
@@ -78,7 +82,7 @@ class CharacterAdapter():
             **extra_args
         }
 
-    def formatting_func(self, examples, tokenizer, add_prompt):
+    def formatting_func_lm_loss(self, examples, tokenizer, add_prompt):
         if add_prompt:
             system_promp = {"role": "system", "content": self.sys_prompt}
             convos = examples["messages"]
@@ -86,6 +90,15 @@ class CharacterAdapter():
                 convo.insert(0, system_promp)
         texts = tokenizer.apply_chat_template(examples["messages"], tokenize = False, add_generation_prompt = False)
         return { "text": texts }
+
+    def formatting_func_assistant_loss(self, examples, tokenizer, add_prompt):
+        convos = examples["messages"]
+        if add_prompt:
+            system_promp = {"role": "system", "content": "You are the philospher Socrates. Answer as he would with the knowlegde of his time and no modern one."}
+            for convo in convos:
+                convo.insert(0, system_promp)
+        return { "messages": convos }
+
 
     def train(self):
         # Use original tokenizer
@@ -103,7 +116,11 @@ class CharacterAdapter():
 
         # import dataset
         charatecter_data = load_from_disk(self.datafile)
-        charatecter_data = charatecter_data.map(self.formatting_func, batched = True, fn_kwargs={"tokenizer":tokenizer, "add_prompt": self.add_prompt}, remove_columns=charatecter_data.column_names, num_proc=4)
+
+        formatting_func = self.formatting_func_lm_loss
+        if self.assistant_only_loss:
+            formatting_func = self.formatting_func_assistant_loss
+        charatecter_data = charatecter_data.map(formatting_func, batched = True, fn_kwargs={"tokenizer": tokenizer, "add_prompt": self.add_prompt}, remove_columns=charatecter_data.column_names, num_proc=4)
 
         # Train
         peft_config = LoraConfig(
@@ -141,26 +158,39 @@ class CharacterAdapter():
         model.save_pretrained(self.output_dir.joinpath("final_model"))
 
 
+def check_digit(text):
+    return int(text) if text.isdigit() else text
+
+def natural_keys(text):
+    return [ check_digit(c) for c in re.split(r'(\d+)', text) ]
+
 if __name__ == "__main__":
     '''
     This script creates an adapter from the instruct model and makes a weighted merge of both to produce a merged model
     '''
 
-    chat_template_path = "/work/gemma_socrates_v0/plus_to_inst_assistant/generate_tag_template.jinja"
+    chat_template_path = "adapters_case/generate_tag_template.jinja"
     sys_prompt = "You are the philospher Socrates. Answer as he would with the knowlegde of his time and no modern one."
 
-    # Use both with and without prompt cases
-    for add_prompt in [False, True]:
-        output_dir = "/work/gemma_socrates_v0/adapters_case/adapter_lm/new_output"
-        if add_prompt:
-            output_dir = "/work/gemma_socrates_v0/adapters_case/adapter_lm/output_prompt_o_proj"
+    # Get the foundational adapter
+    checkpoints_path = "adapters_case/output" 
+    base_adapter_checkpoint = [sorted(glob(f"{path}/*"), key=natural_keys)[-1] for path in glob(f"{checkpoints_path}/*") if "foundational_adapter" in path and Path(path).is_dir()][0]
+    output_dir = "adapters_case/output/merged"
 
-        character_adapter = CharacterAdapter(
-            "google/gemma-3-1b-it", # original_instruct_model
-            "/work/gemma_socrates_v0/base_to_plus/output/checkpoint-3650/", # base_adapter_checkpoint
-            output_dir, # datafile
-            add_prompt=add_prompt,
-            chat_template_path = chat_template_path,
-            sys_prompt = sys_prompt
-        )
-        character_adapter.train()
+    # Use full LM loss and assistant only cases
+    for assistant_only_loss in [False, True]:
+        # Use both with and without prompt cases
+        for add_prompt in [False, True]:
+            character_adapter = CharacterAdapter(
+                "google/gemma-3-1b-it", # original_instruct_model
+                base_adapter_checkpoint, # base_adapter_checkpoint
+                datafile="test_data/train", # arrow
+                output_dir=output_dir,
+                num_train_epochs = 1,
+                add_prompt=add_prompt,
+                assistant_only_loss=assistant_only_loss,
+                chat_template_path = chat_template_path,
+                sys_prompt = sys_prompt
+            )
+
+            character_adapter.train()
