@@ -2,7 +2,7 @@
 
 WIP: The final code and documentation is still under construction
 
-Create LLM-based characters to chat with. Start with a `JSONL` database file of knowledge from a character and another one with conversation data (up to the user, but (this repo)[https://github.com/DargorAbraxas/conversation_data_generation] can be used) to create a fine-tuned LLM.
+Create LLM-based characters to chat with. Start with a `JSONL` database file of knowledge from a character and another one with conversation data (up to the user, but [this repo](https://github.com/DargorAbraxas/conversation_data_generation) can be used) to create a fine-tuned LLM.
 
 Currently, there are 2 "big" options supported:
 - Full fine-tuning
